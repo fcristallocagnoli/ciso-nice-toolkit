@@ -1262,9 +1262,9 @@ function renderTimeline() {
   const outsources = DATA.plan.filter(p=>p.action==='outsource');
 
   const phases = [
-    { label: 'Phase 1 — Months 1-6: Training & Upskilling',  cls: 'green',  items: trains },
-    { label: 'Phase 2 — Months 3-18: Strategic Hiring',       cls: '',       items: hires },
-    { label: 'Phase 3 — Months 1-24: Outsourcing',            cls: 'yellow', items: outsources },
+    { range: 'Months 1-6',  strategy: 'Training & Upskilling', cls: 'green',  items: trains },
+    { range: 'Months 3-18', strategy: 'Strategic Hiring',       cls: '',       items: hires },
+    { range: 'Months 1-24', strategy: 'Outsourcing',            cls: 'yellow', items: outsources },
   ].filter(ph => ph.items.length > 0);
 
   function tlItems(arr, cls) {
@@ -1282,13 +1282,12 @@ function renderTimeline() {
   const total = DATA.plan.reduce((s,p)=>s+p.cost_2yr,0);
   const summaryRows = phases.map(ph => {
     const cost = ph.items.reduce((s,p)=>s+p.cost_2yr,0);
-    const strategy = ph.label.replace(/Phase \\d+ — [^:]+: /,'');
-    return `<tr><td>${strategy}</td><td>${ph.items.length}</td><td>${fmt(cost)}</td></tr>`;
+    return `<tr><td>${ph.strategy}</td><td>${ph.items.length}</td><td>${fmt(cost)}</td></tr>`;
   }).join('');
 
-  const html = phases.map(ph => `
+  const html = phases.map((ph, i) => `
     <div class="chart-container">
-      <h3>${ph.label}</h3>
+      <h3>Phase ${i + 1} — ${ph.range}: ${ph.strategy}</h3>
       <div class="timeline">${tlItems(ph.items, ph.cls)}</div>
     </div>`).join('') + `
     <div class="chart-container" style="margin-top:1rem">
