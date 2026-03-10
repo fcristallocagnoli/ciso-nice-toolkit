@@ -1,0 +1,42 @@
+role_id,title,category,hire_cost,training_cost,outsource_cost,time_to_hire_months,cert_bonus_cost,criticality_score,risk_impact_pct
+OG-WRL-001,Communications Security (COMSEC) Management,OG,120000,8000,87000,4,3000,8.2,15
+OG-WRL-002,Cybersecurity Policy and Planning,OG,115000,7500,84000,4,2500,8.1,15
+OG-WRL-003,Cybersecurity Workforce Management,OG,120000,9000,87000,4,3500,8.2,15
+OG-WRL-004,Cybersecurity Curriculum Development,OG,106000,8000,78000,4,3000,7.8,13
+OG-WRL-005,Cybersecurity Instruction,OG,103000,7500,76000,4,2500,7.6,12
+OG-WRL-006,Cybersecurity Legal Advice,OG,134000,85000,48000,5,18000,8.4,17
+OG-WRL-007,Executive Cybersecurity Leadership,OG,150000,55000,95000,7,12000,9.5,22
+OG-WRL-008,Privacy Compliance,OG,120000,9000,88000,4,3500,8.2,15
+OG-WRL-009,Product Support Management,OG,120000,8500,87000,4,3500,8.2,15
+OG-WRL-010,Program Management,OG,120000,8000,87000,4,3000,8.2,15
+OG-WRL-011,Secure Project Management,OG,125000,78000,45000,4,16000,8.3,16
+OG-WRL-012,Security Control Assessment,OG,107000,7000,80000,4,2500,8.1,15
+OG-WRL-013,Systems Authorization,OG,118000,8500,86000,4,3500,8.2,15
+OG-WRL-014,Systems Security Management,OG,120000,8000,87000,4,3000,8.2,15
+OG-WRL-015,Technology Portfolio Management,OG,132000,82000,47000,5,17000,8.4,16
+OG-WRL-016,Technology Program Auditing,OG,104000,7500,80000,4,2500,7.9,13
+DD-WRL-001,Cybersecurity Architecture,DD,140000,92000,50000,5,20000,8.9,21
+DD-WRL-002,Enterprise Architecture,DD,133000,50000,100000,5,12000,8.9,21
+DD-WRL-003,Secure Software Development,DD,125000,88000,48000,4,18000,8.4,18
+DD-WRL-004,Secure Systems Development,DD,125000,52000,95000,4,11000,8.6,19
+DD-WRL-005,Software Security Assessment,DD,120000,85000,45000,4,18000,8.5,19
+DD-WRL-006,Systems Requirements Planning,DD,120000,10000,91000,4,4000,8.3,18
+DD-WRL-007,Systems Testing and Evaluation,DD,115000,9500,88000,4,3500,8.1,17
+DD-WRL-008,Technology Research and Development,DD,135000,90000,50000,5,20000,8.6,19
+DD-WRL-009,Operational Technology (OT) Cybersecurity Engineering,DD,136000,55000,102000,5,13000,9.0,21
+IO-WRL-001,Data Analysis,IO,94000,6000,68000,3,2000,7.2,11
+IO-WRL-002,Database Administration,IO,83000,5500,61000,2,2000,6.8,10
+IO-WRL-003,Knowledge Management,IO,88000,5000,64000,2,2000,6.8,9
+IO-WRL-004,Network Operations,IO,84000,6000,62000,2,2500,6.9,10
+IO-WRL-005,Systems Administration,IO,80000,5000,59000,2,2000,6.7,9
+IO-WRL-006,Systems Security Analysis,IO,90000,6500,65000,3,2500,7.3,11
+IO-WRL-007,Technical Support,IO,74000,4500,55000,1,1500,6.3,7
+PD-WRL-001,Defensive Cybersecurity,PD,96000,75000,35000,3,16000,8.5,18
+PD-WRL-002,Digital Forensics,PD,106000,80000,38000,3,18000,8.7,19
+PD-WRL-003,Incident Response,PD,101000,38000,75000,3,9000,8.9,20
+PD-WRL-004,Infrastructure Support,PD,94000,8000,71000,3,3000,8.3,16
+PD-WRL-005,Insider Threat Analysis,PD,115000,42000,87000,4,10000,9.4,22
+PD-WRL-006,Threat Analysis,PD,108000,40000,82000,4,9000,9.0,20
+PD-WRL-007,Vulnerability Analysis,PD,100000,78000,37000,3,17000,8.7,19
+IN-WRL-001,Cybercrime Investigation,IN,116000,43000,88000,5,11000,9.3,22
+IN-WRL-002,Digital Evidence Analysis,IN,112000,41000,85000,4,10000,9.1,21

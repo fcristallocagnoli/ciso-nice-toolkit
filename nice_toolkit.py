@@ -395,12 +395,12 @@ def load_role_costs(csv_path: Path) -> Dict[str, RoleCost]:
     return costs
 
 
-def action_cost_2yr(rc: RoleCost) -> float:
-    """Compute realistic 2-year total cost for a role given its action type."""
-    if rc.action == "train":
+def action_cost_2yr_for(rc: RoleCost, action: str) -> float:
+    """2-year cost for an explicit action — used by the optimizer to evaluate all strategies."""
+    if action == "train":
         return rc.training_cost + rc.cert_bonus_cost
-    elif rc.action == "outsource":
-        return rc.outsource_cost * 2  # 2 years
+    elif action == "outsource":
+        return rc.outsource_cost * 2
     else:  # hire
         return rc.hire_cost * 2 + rc.cert_bonus_cost
 
@@ -433,6 +433,11 @@ def recommend(
     for r in all_roles:
         role_cov[r] = role_coverage(r, adj, nodes, depth=depth)
 
+    # cost_unit: the cost at which the penalty divisor doubles (cost/cost_unit + 1 = 2).
+    # Anchored to budget/5 so the scale adjusts automatically with the planning horizon.
+    # Example: budget=$250k → cost_unit=$50k → a $50k role gets divisor 2.0 (gain halved).
+    cost_unit = budget / 5
+
     chosen: List[Dict[str, Any]] = []
     covered: Dict[str, Set[str]] = {"tasks": set(), "skills": set(), "knowledge": set()}
     remaining_budget = budget
@@ -441,6 +446,7 @@ def recommend(
         best = None
         best_score = -1.0
         best_cost = 0.0
+        best_action = "hire"
 
         for r in all_roles:
             if any(c["role_id"] == r for c in chosen):
@@ -460,20 +466,20 @@ def recommend(
             if gain == 0:
                 continue
 
-            # Cost-adjusted gain
             rc = role_costs.get(r)
-            cost = action_cost_2yr(rc) if rc else 80_000  # default estimate
-            if cost > remaining_budget:
-                continue
-
-            # Criticality bonus
             crit = rc.criticality_score if rc else 5.0
-            adjusted = gain * (1 + 0.05 * crit) / (cost / 50_000 + 1)
 
-            if adjusted > best_score:
-                best_score = adjusted
-                best = r
-                best_cost = cost
+            # Evaluate all three strategies; pick the one with best cost-adjusted score
+            for action in ("train", "hire", "outsource"):
+                cost = action_cost_2yr_for(rc, action) if rc else 80_000
+                if cost > remaining_budget:
+                    continue
+                adjusted = gain * (1 + 0.05 * crit) / (cost / cost_unit + 1)
+                if adjusted > best_score:
+                    best_score = adjusted
+                    best = r
+                    best_cost = cost
+                    best_action = action
 
         if not best:
             break
@@ -483,15 +489,13 @@ def recommend(
             {
                 "role_id": best,
                 "title": nodes[best].title,
-                "action": rc.action if rc else "hire",
+                "action": best_action,
                 "cost_2yr": best_cost,
                 "criticality": rc.criticality_score if rc else 5.0,
                 "risk_impact_pct": rc.risk_impact_pct if rc else 0,
                 "new_tasks": len(role_cov[best]["tasks"] - covered["tasks"]),
                 "new_skills": len(role_cov[best]["skills"] - covered["skills"]),
-                "new_knowledge": len(
-                    role_cov[best]["knowledge"] - covered["knowledge"]
-                ),
+                "new_knowledge": len(role_cov[best]["knowledge"] - covered["knowledge"]),
                 "weighted_gain": round(best_score, 2),
             }
         )
@@ -839,16 +843,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <div class="card red"><div class="card-label">Missing Knowledge</div><div class="card-value" id="gap-knowledge">—</div></div>
         <div class="card"><div class="card-label">Weighted Gap Score</div><div class="card-value" id="gap-score">—</div></div>
       </div>
-      <div class="grid2">
-        <div class="chart-container">
-          <h3 id="soc-gap-title">SOC Focus Gap</h3>
-          <div id="soc-bars"></div>
-        </div>
-        <div class="chart-container">
-          <h3 id="grc-gap-title">GRC Focus Gap</h3>
-          <div id="grc-bars"></div>
-        </div>
-      </div>
       <div class="chart-container">
         <h3>Current vs Target Role Mapping</h3>
         <table>
@@ -985,7 +979,9 @@ function renderPage(id) {
 
 function renderOverview() {
   document.getElementById('cur-roles').textContent = DATA.current_roles.length;
-  document.getElementById('tgt-roles').textContent = DATA.plan.length + DATA.current_roles.length;
+  // Count unique roles (current + new from plan, avoiding double-counting trained roles)
+  const uniqueRoles = new Set([...DATA.current_roles, ...DATA.plan.map(p => p.role_id)]);
+  document.getElementById('tgt-roles').textContent = uniqueRoles.size;
   document.getElementById('total-budget').textContent = fmtk(DATA.budget);
   const avgRisk = DATA.scenarios.reduce((s,sc) => s + sc.after_pct, 0) / (DATA.scenarios.length || 1);
   document.getElementById('risk-avg').textContent = pct(avgRisk);
@@ -1039,31 +1035,6 @@ function renderGap() {
   document.getElementById('gap-knowledge').textContent = gap.missing_knowledge;
   const activeGap = DATA.focus === 'grc' ? gap.weighted_gap_grc : gap.weighted_gap_soc;
   document.getElementById('gap-score').textContent = activeGap.toFixed(1) + ' (' + DATA.focus.toUpperCase() + ')';
-
-  // Update gap titles with actual weights from DATA
-  const sw = DATA.focus_weights.soc;
-  const gw = DATA.focus_weights.grc;
-  document.getElementById('soc-gap-title').textContent = `SOC Focus Gap (T=${sw.tasks} S=${sw.skills} K=${sw.knowledge})`;
-  document.getElementById('grc-gap-title').textContent = `GRC Focus Gap (T=${gw.tasks} S=${gw.skills} K=${gw.knowledge})`;
-
-  // SOC bars
-  const socBars = [
-    {label:'Tasks',cur:DATA.coverage.current.tasks,tgt:DATA.coverage.target.tasks},
-    {label:'Skills',cur:DATA.coverage.current.skills,tgt:DATA.coverage.target.skills},
-    {label:'Knowledge',cur:DATA.coverage.current.knowledge,tgt:DATA.coverage.target.knowledge},
-  ];
-  document.getElementById('soc-bars').innerHTML = socBars.map(b => `
-    <div class="progress-row">
-      <span class="progress-label">${b.label}</span>
-      <div class="progress-bar"><div class="progress-fill" style="width:${b.cur/b.tgt*100}%"></div></div>
-      <span class="progress-val">${b.cur}/${b.tgt}</span>
-    </div>`).join('');
-  document.getElementById('grc-bars').innerHTML = socBars.map(b => `
-    <div class="progress-row">
-      <span class="progress-label">${b.label}</span>
-      <div class="progress-bar"><div class="progress-fill" style="width:${b.cur/b.tgt*100}%;background:linear-gradient(90deg,#ffd740,#00d4ff)"></div></div>
-      <span class="progress-val">${b.cur}/${b.tgt}</span>
-    </div>`).join('');
 
   // Role table
   const allRoles = [...new Set([...DATA.current_roles, ...DATA.target_roles])];
