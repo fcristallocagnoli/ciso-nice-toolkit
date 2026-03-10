@@ -415,6 +415,10 @@ def recommend(
     costs_path: Optional[Path] = None,
     current_roles: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
+    # --- Beam Search planner (replaces greedy) ---
+    from dataclasses import dataclass
+    import copy
+
     focus = focus.lower()
     w = FOCUS_WEIGHTS[focus]
 
@@ -438,107 +442,151 @@ def recommend(
     for r in candidate_roles:
         role_cov[r] = role_coverage(r, adj, nodes, depth=depth)
 
-    # cost_unit: the cost at which the penalty divisor doubles (cost/cost_unit + 1 = 2).
-    # Anchored to budget/5 so the scale adjusts automatically with the planning horizon.
-    # Example: budget=$250k → cost_unit=$50k → a $50k role gets divisor 2.0 (gain halved).
+    # cost_unit: the cost at which the penalty divisor doubles
     cost_unit = budget / 5
 
-    # "train" = upskill an existing employee to cover a new role (max 1 extra role/person)
+    # Trainers = current staff roles.
+    # Max 2 roles/person => each trainer can be used at most once ("train" gives +1 role).
     available_trainers: List[str] = sorted(current_roles) if current_roles else []
 
-    chosen: List[Dict[str, Any]] = []
-    covered: Dict[str, Set[str]] = {"tasks": set(), "skills": set(), "knowledge": set()}
-    remaining_budget = budget
+    @dataclass
+    class _State:
+        chosen: List[Dict[str, Any]]
+        covered: Dict[str, Set[str]]
+        remaining_budget: float
+        available_trainers: List[str]
+
+    def _state_score(state: _State) -> float:
+        # Score for pruning beam: total covered weighted by focus
+        return (
+            w["tasks"] * len(state.covered["tasks"])
+            + w["skills"] * len(state.covered["skills"])
+            + w["knowledge"] * len(state.covered["knowledge"])
+        )
+
+    def _assign_trainer(best_role: str, trainers: List[str]) -> Optional[str]:
+        # Prefer same category (PD/DD/OG/IO/IN) trainer if possible
+        if not trainers:
+            return None
+        prefix = best_role.split("-")[0]
+        same_cat = [t for t in trainers if t.startswith(prefix + "-")]
+        return same_cat[0] if same_cat else trainers[0]
+
+    # Beam width: fixed constant to keep signature unchanged.
+    # Increase if you want more optimality at the cost of runtime.
+    BEAM_WIDTH = 20
+
+    init_state = _State(
+        chosen=[],
+        covered={"tasks": set(), "skills": set(), "knowledge": set()},
+        remaining_budget=budget,
+        available_trainers=available_trainers[:],
+    )
+
+    beam: List[_State] = [init_state]
 
     for _ in range(top_n):
-        best = None
-        best_score = -1.0
-        best_cost = 0.0
-        best_action = "hire"
+        expansions: List[_State] = []
 
-        for r in candidate_roles:
-            if any(c["role_id"] == r for c in chosen):
-                continue
+        for state in beam:
+            # Build a fast set of already chosen roles for this state
+            chosen_roles = {c["role_id"] for c in state.chosen}
 
-            marginal = {
-                "tasks": role_cov[r]["tasks"] - covered["tasks"],
-                "skills": role_cov[r]["skills"] - covered["skills"],
-                "knowledge": role_cov[r]["knowledge"] - covered["knowledge"],
-            }
-
-            gain = (
-                w["tasks"] * len(marginal["tasks"])
-                + w["skills"] * len(marginal["skills"])
-                + w["knowledge"] * len(marginal["knowledge"])
-            )
-            if gain == 0:
-                continue
-
-            rc = role_costs.get(r)
-            crit = rc.criticality_score if rc else 5.0
-
-            # Use CSV-designated action as authoritative preference.
-            # 5.0× bonus for the preferred action, 0.3× penalty for alternatives —
-            # this lets coverage differences between roles drive ordering, while
-            # the designation (train/hire/outsource) locks in the strategy.
-            preferred = rc.action if rc else "hire"
-            costs_map = {a: (action_cost_2yr_for(rc, a) if rc else 80_000) for a in ("train", "hire", "outsource")}
-
-            # Evaluate all three strategies; pick the one with best cost-adjusted score
-            for action in ("train", "hire", "outsource"):
-                # "train" requires an available current employee to upskill
-                if action == "train" and not available_trainers:
+            for r in candidate_roles:
+                if r in chosen_roles:
                     continue
 
-                cost = costs_map[action]
-                if cost > remaining_budget:
+                marginal = {
+                    "tasks": role_cov[r]["tasks"] - state.covered["tasks"],
+                    "skills": role_cov[r]["skills"] - state.covered["skills"],
+                    "knowledge": role_cov[r]["knowledge"] - state.covered["knowledge"],
+                }
+
+                gain = (
+                    w["tasks"] * len(marginal["tasks"])
+                    + w["skills"] * len(marginal["skills"])
+                    + w["knowledge"] * len(marginal["knowledge"])
+                )
+                if gain == 0:
                     continue
 
-                fit_multiplier = 5.0 if action == preferred else 0.3
-                adjusted = gain * (1 + 0.05 * crit) * fit_multiplier / (cost / cost_unit + 1)
-                if adjusted > best_score:
-                    best_score = adjusted
-                    best = r
-                    best_cost = cost
-                    best_action = action
+                rc = role_costs.get(r)
+                crit = rc.criticality_score if rc else 5.0
 
-        if not best:
+                preferred = rc.action if rc else "hire"
+                costs_map = {
+                    a: (action_cost_2yr_for(rc, a) if rc else 80_000)
+                    for a in ("train", "hire", "outsource")
+                }
+
+                for action in ("train", "hire", "outsource"):
+                    # Max 2 roles/person: each trainer can only train once.
+                    if action == "train" and not state.available_trainers:
+                        continue
+
+                    cost = costs_map[action]
+                    if cost > state.remaining_budget:
+                        continue
+
+                    fit_multiplier = 5.0 if action == preferred else 0.3
+                    adjusted = gain * (1 + 0.05 * crit) * fit_multiplier / (cost / cost_unit + 1)
+
+                    # Create new expanded state
+                    new_state = _State(
+                        chosen=copy.deepcopy(state.chosen),
+                        covered={
+                            "tasks": set(state.covered["tasks"]),
+                            "skills": set(state.covered["skills"]),
+                            "knowledge": set(state.covered["knowledge"]),
+                        },
+                        remaining_budget=state.remaining_budget,
+                        available_trainers=list(state.available_trainers),
+                    )
+
+                    trained_by = None
+                    trained_by_title = None
+                    if action == "train":
+                        trainer = _assign_trainer(r, new_state.available_trainers)
+                        if trainer is None:
+                            continue
+                        new_state.available_trainers.remove(trainer)
+                        trained_by = trainer
+                        trained_by_title = nodes[trainer].title if trainer in nodes else None
+
+                    new_state.chosen.append(
+                        {
+                            "role_id": r,
+                            "title": nodes[r].title,
+                            "action": action,
+                            "cost_2yr": cost,
+                            "criticality": crit,
+                            "risk_impact_pct": rc.risk_impact_pct if rc else 0,
+                            "new_tasks": len(marginal["tasks"]),
+                            "new_skills": len(marginal["skills"]),
+                            "new_knowledge": len(marginal["knowledge"]),
+                            "weighted_gain": round(adjusted, 2),
+                            "trained_by": trained_by,
+                            "trained_by_title": trained_by_title,
+                        }
+                    )
+
+                    new_state.covered["tasks"] |= role_cov[r]["tasks"]
+                    new_state.covered["skills"] |= role_cov[r]["skills"]
+                    new_state.covered["knowledge"] |= role_cov[r]["knowledge"]
+                    new_state.remaining_budget -= cost
+
+                    expansions.append(new_state)
+
+        if not expansions:
             break
 
-        # Assign a trainer if action is "train"
-        trained_by = None
-        trained_by_title = None
-        if best_action == "train" and available_trainers:
-            prefix = best.split("-")[0]
-            same_cat = [t for t in available_trainers if t.startswith(prefix + "-")]
-            trainer = same_cat[0] if same_cat else available_trainers[0]
-            available_trainers.remove(trainer)
-            trained_by = trainer
-            trained_by_title = nodes[trainer].title if trainer in nodes else None
+        # Keep best BEAM_WIDTH states by total covered score (pruning)
+        expansions.sort(key=_state_score, reverse=True)
+        beam = expansions[:BEAM_WIDTH]
 
-        rc = role_costs.get(best)
-        chosen.append(
-            {
-                "role_id": best,
-                "title": nodes[best].title,
-                "action": best_action,
-                "cost_2yr": best_cost,
-                "criticality": rc.criticality_score if rc else 5.0,
-                "risk_impact_pct": rc.risk_impact_pct if rc else 0,
-                "new_tasks": len(role_cov[best]["tasks"] - covered["tasks"]),
-                "new_skills": len(role_cov[best]["skills"] - covered["skills"]),
-                "new_knowledge": len(role_cov[best]["knowledge"] - covered["knowledge"]),
-                "weighted_gain": round(best_score, 2),
-                "trained_by": trained_by,
-                "trained_by_title": trained_by_title,
-            }
-        )
-        covered["tasks"] |= role_cov[best]["tasks"]
-        covered["skills"] |= role_cov[best]["skills"]
-        covered["knowledge"] |= role_cov[best]["knowledge"]
-        remaining_budget -= best_cost
-
-    return chosen
+    # Return best final plan found
+    best_final = max(beam, key=_state_score)
+    return best_final.chosen
 
 
 def export_reco_md(
