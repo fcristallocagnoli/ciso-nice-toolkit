@@ -2,21 +2,21 @@
   {
     "name": "Ransomware Attack",
     "description": "Attacker deploys ransomware across endpoints, encrypting business-critical data.",
-    "required_tasks": ["T0161","T0163","T0164","T0175","T0260","T0291","T0309","T0395","T0431","T0503","T0526","T0569","T0175","T0187","T0200","T0214"]
+    "required_tasks": ["T1126","T1320","T1149","T1150","T1489","T1085","T1241","T1242","T1347","T1350","T1387","T1388","T1389","T1428","T1582"]
   },
   {
     "name": "Data Leak / Insider Threat",
     "description": "Sensitive PII or IP is exfiltrated by a malicious or negligent insider.",
-    "required_tasks": ["T0020","T0023","T0043","T0074","T0099","T0110","T0114","T0120","T0166","T0174","T0190","T0209"]
+    "required_tasks": ["T1010","T1203","T0271","T1022","T1401","T1454","T1455","T2046","T1177","T1548","T0274","T1378"]
   },
   {
     "name": "Audit Failure / Compliance Gap",
     "description": "Organization fails regulatory audit (ISO 27001 / NIST / GDPR) due to policy or control gaps.",
-    "required_tasks": ["T0027","T0065","T0089","T0092","T0094","T0095","T0264","T0265","T0308","T0339","T0354","T0355"]
+    "required_tasks": ["T1265","T1294","T1083","T0271","T1604","T1069","T1070","T2030","T2032","T2036","T2043","T2049"]
   },
   {
     "name": "Supply Chain Compromise",
     "description": "Third-party software or vendor is compromised, leading to lateral movement inside org.",
-    "required_tasks": ["T0148","T0187","T0191","T0228","T0268","T0338","T0397","T0414","T0427","T0440"]
+    "required_tasks": ["T1168","T1169","T1026","T1345","T2038","T2048","T1023","T1366","T1367","T1598"]
   }
 ]
