@@ -867,6 +867,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <h3>Risk Reduction by Scenario (Before → After Plan)</h3>
         <canvas id="riskChart"></canvas>
       </div>
+      <div class="chart-container">
+        <h3>NICE Category Distribution (Current vs Planned Additions)</h3>
+        <canvas id="categoryChart"></canvas>
+      </div>
     </div>
 
     <!-- GAP -->
@@ -904,6 +908,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="chart-container" style="margin-top:1.5rem;">
         <h3>Marginal Coverage Gain per Role (selected focus)</h3>
         <canvas id="recoChart"></canvas>
+      </div>
+      <div class="chart-container" style="margin-top:1.5rem;">
+        <h3>Risk Impact Contribution per Role</h3>
+        <canvas id="riskImpactChart"></canvas>
       </div>
     </div>
 
@@ -943,27 +951,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <!-- TIMELINE -->
     <div id="timeline" class="page">
       <h2>2-Year Implementation Roadmap</h2>
-      <div class="grid2">
-        <div>
-          <div class="chart-container">
-            <h3>Phase 1 — Months 1-6: Training</h3>
-            <div class="timeline" id="tl-train"></div>
-          </div>
-          <div class="chart-container">
-            <h3>Phase 2 — Months 1-24: Hiring</h3>
-            <div class="timeline" id="tl-hire"></div>
-          </div>
-        </div>
-        <div>
-          <div class="chart-container">
-            <h3>Phase 3 — Months 1-24: Outsourcing</h3>
-            <div class="timeline" id="tl-outsource"></div>
-          </div>
-          <div class="chart-container">
-            <h3>Cumulative Coverage Growth</h3>
-            <canvas id="growthChart"></canvas>
-          </div>
-        </div>
+      <div id="tl-phases"></div>
+      <div class="chart-container" style="margin-top:1.5rem">
+        <h3>ROI — New Tasks Covered per $10k Invested</h3>
+        <canvas id="roiChart"></canvas>
       </div>
     </div>
 
@@ -1061,6 +1052,23 @@ function renderOverview() {
     },
     options: {responsive:true, plugins:{legend:{position:'top'}}, scales:{y:{max:100,beginAtZero:true}}}
   });
+
+  // NICE category distribution: current staff vs roles added by plan
+  const cats = ['IO','OG','PD','DD','IN'];
+  const catLabels = {IO:'Operations (IO)', OG:'Governance (OG)', PD:'Defense (PD)', DD:'Design & Dev (DD)', IN:'Investigation (IN)'};
+  const curCatCount  = cats.map(c => DATA.current_roles.filter(r => r.startsWith(c+'-')).length);
+  const planCatCount = cats.map(c => DATA.plan.filter(p => p.role_id.startsWith(c+'-')).length);
+  mkChart('categoryChart', {
+    type: 'bar',
+    data: {
+      labels: cats.map(c => catLabels[c]),
+      datasets: [
+        {label:'Current Staff',   data:curCatCount,  backgroundColor:'rgba(108,99,255,.6)'},
+        {label:'Added by Plan',   data:planCatCount, backgroundColor:'rgba(0,212,255,.7)'},
+      ]
+    },
+    options: {responsive:true, plugins:{legend:{position:'top'}}, scales:{x:{stacked:false}, y:{beginAtZero:true, ticks:{stepSize:1}, title:{display:true,text:'# Roles'}}}}
+  });
 }
 
 function renderGap() {
@@ -1111,6 +1119,28 @@ function renderReco() {
     },
     options: {responsive:true, plugins:{legend:{position:'top'}}, scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true}}}
   });
+
+  // Risk impact contribution per role (horizontal bar)
+  mkChart('riskImpactChart', {
+    type: 'bar',
+    data: {
+      labels: picks.map(p => p.role_id),
+      datasets: [{
+        label: 'Risk Impact (%)',
+        data: picks.map(p => p.risk_impact_pct),
+        backgroundColor: picks.map(p => p.action==='train'?'rgba(0,230,118,.7)':p.action==='outsource'?'rgba(255,215,64,.7)':'rgba(108,99,255,.7)'),
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: {
+        legend: {display:false},
+        tooltip: {callbacks:{label: ctx => `${ctx.raw}% risk reduction contribution`}}
+      },
+      scales: {x:{beginAtZero:true, title:{display:true,text:'Risk Impact (%)'}}}
+    }
+  });
 }
 
 function renderBudget() {
@@ -1152,6 +1182,7 @@ function renderBudget() {
       scales: {x:{title:{display:true,text:'2-Year Cost ($)'}}, y:{title:{display:true,text:'New Tasks Covered'},beginAtZero:true}}
     }
   });
+
 }
 
 function renderRisk() {
@@ -1178,40 +1209,71 @@ function renderRisk() {
 }
 
 function renderTimeline() {
-  const trains = DATA.plan.filter(p=>p.action==='train');
-  const hires = DATA.plan.filter(p=>p.action==='hire');
+  const trains    = DATA.plan.filter(p=>p.action==='train');
+  const hires     = DATA.plan.filter(p=>p.action==='hire');
   const outsources = DATA.plan.filter(p=>p.action==='outsource');
 
+  const phases = [
+    { label: 'Phase 1 — Months 1-6: Training & Upskilling',  cls: 'green',  items: trains },
+    { label: 'Phase 2 — Months 3-18: Strategic Hiring',       cls: '',       items: hires },
+    { label: 'Phase 3 — Months 1-24: Outsourcing',            cls: 'yellow', items: outsources },
+  ].filter(ph => ph.items.length > 0);
+
   function tlItems(arr, cls) {
-    if (!arr.length) return '<p style="color:var(--muted);font-size:.85rem">No actions in this phase.</p>';
     return arr.map(p => `
       <div class="tl-item ${cls}">
         <div class="tl-dot"></div>
-        <div class="tl-title">${p.title} (${p.role_id})</div>
+        <div class="tl-title">${p.title} (${p.role_id})${
+          p.trained_by ? ` <span style="font-size:.75rem;color:var(--muted)">← upskill ${p.trained_by_title||p.trained_by}</span>` : ''
+        }</div>
         <div class="tl-sub">Cost: ${fmt(p.cost_2yr)} · +${p.new_tasks} tasks · +${p.new_skills} skills</div>
       </div>`).join('');
   }
 
-  document.getElementById('tl-train').innerHTML = tlItems(trains, 'green');
-  document.getElementById('tl-hire').innerHTML = tlItems(hires, '');
-  document.getElementById('tl-outsource').innerHTML = tlItems(outsources, 'yellow');
+  // Budget summary table
+  const total = DATA.plan.reduce((s,p)=>s+p.cost_2yr,0);
+  const summaryRows = phases.map(ph => {
+    const cost = ph.items.reduce((s,p)=>s+p.cost_2yr,0);
+    const strategy = ph.label.replace(/Phase \\d+ — [^:]+: /,'');
+    return `<tr><td>${strategy}</td><td>${ph.items.length}</td><td>${fmt(cost)}</td></tr>`;
+  }).join('');
 
-  // Cumulative growth chart
-  let cumT=DATA.coverage.current.tasks, cumS=DATA.coverage.current.skills, cumK=DATA.coverage.current.knowledge;
-  const labels=['Month 0'];
-  const dT=[cumT], dS=[cumS], dK=[cumK];
-  DATA.plan.forEach((p,i) => {
-    cumT += p.new_tasks; cumS += p.new_skills; cumK += p.new_knowledge;
-    labels.push(`+Role ${i+1}`); dT.push(cumT); dS.push(cumS); dK.push(cumK);
-  });
-  mkChart('growthChart', {
-    type:'line',
-    data:{labels, datasets:[
-      {label:'Tasks',data:dT,borderColor:'#6c63ff',fill:false},
-      {label:'Skills',data:dS,borderColor:'#00d4ff',fill:false},
-      {label:'Knowledge',data:dK,borderColor:'#00e676',fill:false},
-    ]},
-    options:{responsive:true,plugins:{legend:{position:'top'}},scales:{y:{beginAtZero:false}}}
+  const html = phases.map(ph => `
+    <div class="chart-container">
+      <h3>${ph.label}</h3>
+      <div class="timeline">${tlItems(ph.items, ph.cls)}</div>
+    </div>`).join('') + `
+    <div class="chart-container" style="margin-top:1rem">
+      <h3>Budget Summary</h3>
+      <table><thead><tr><th>Strategy</th><th>Count</th><th>2-Year Cost</th></tr></thead>
+      <tbody>${summaryRows}
+        <tr style="font-weight:700"><td>Total</td><td>${DATA.plan.length}</td><td>${fmt(total)}</td></tr>
+        <tr><td style="color:var(--muted)">Remaining</td><td></td><td style="color:var(--green)">${fmt(DATA.budget-total)}</td></tr>
+      </tbody></table>
+    </div>`;
+
+  document.getElementById('tl-phases').innerHTML = html;
+
+  // ROI: new tasks per $10k invested (horizontal bar)
+  mkChart('roiChart', {
+    type: 'bar',
+    data: {
+      labels: DATA.plan.map(p => p.role_id),
+      datasets: [{
+        label: 'Tasks per $10k',
+        data: DATA.plan.map(p => p.cost_2yr > 0 ? +(p.new_tasks / p.cost_2yr * 10000).toFixed(2) : 0),
+        backgroundColor: DATA.plan.map(p => p.action==='train'?'#00e676':p.action==='outsource'?'#ffd740':'#6c63ff'),
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: {
+        legend: {display:false},
+        tooltip: {callbacks:{label: ctx => `${ctx.raw} new tasks per $10k (${DATA.plan[ctx.dataIndex].action})`}}
+      },
+      scales: {x:{beginAtZero:true, title:{display:true,text:'New Tasks per $10k Invested'}}}
+    }
   });
 }
 
