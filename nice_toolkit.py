@@ -413,6 +413,7 @@ def recommend(
     depth: int = 5,
     budget: float = 250_000,
     costs_path: Optional[Path] = None,
+    current_roles: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
     focus = focus.lower()
     w = FOCUS_WEIGHTS[focus]
@@ -437,6 +438,9 @@ def recommend(
     # Anchored to budget/5 so the scale adjusts automatically with the planning horizon.
     # Example: budget=$250k → cost_unit=$50k → a $50k role gets divisor 2.0 (gain halved).
     cost_unit = budget / 5
+
+    # "train" = upskill an existing employee to cover a new role (max 1 extra role/person)
+    available_trainers: List[str] = sorted(current_roles) if current_roles else []
 
     chosen: List[Dict[str, Any]] = []
     covered: Dict[str, Set[str]] = {"tasks": set(), "skills": set(), "knowledge": set()}
@@ -469,12 +473,37 @@ def recommend(
             rc = role_costs.get(r)
             crit = rc.criticality_score if rc else 5.0
 
+            # Determine cheapest action to set fit_multiplier bonuses
+            costs_map = {a: (action_cost_2yr_for(rc, a) if rc else 80_000) for a in ("train", "hire", "outsource")}
+            min_action = min(costs_map, key=lambda a: costs_map[a])
+
             # Evaluate all three strategies; pick the one with best cost-adjusted score
             for action in ("train", "hire", "outsource"):
-                cost = action_cost_2yr_for(rc, action) if rc else 80_000
+                # "train" requires an available current employee to upskill
+                if action == "train" and not available_trainers:
+                    continue
+
+                cost = costs_map[action]
                 if cost > remaining_budget:
                     continue
-                adjusted = gain * (1 + 0.05 * crit) / (cost / cost_unit + 1)
+
+                # fit_multiplier rewards the naturally cheapest action for the role
+                if action == min_action:
+                    if action == "train":
+                        fit_multiplier = 2.5
+                    elif action == "hire":
+                        fit_multiplier = 2.0
+                    else:  # outsource cheapest
+                        fit_multiplier = 2.2 if costs_map["outsource"] < costs_map["hire"] * 0.75 else 1.0
+                else:
+                    if action == "train" and costs_map["train"] > costs_map["hire"] * 0.6:
+                        fit_multiplier = 0.2
+                    elif action == "train":
+                        fit_multiplier = 0.4
+                    else:
+                        fit_multiplier = 1.0
+
+                adjusted = gain * (1 + 0.05 * crit) * fit_multiplier / (cost / cost_unit + 1)
                 if adjusted > best_score:
                     best_score = adjusted
                     best = r
@@ -483,6 +512,17 @@ def recommend(
 
         if not best:
             break
+
+        # Assign a trainer if action is "train"
+        trained_by = None
+        trained_by_title = None
+        if best_action == "train" and available_trainers:
+            prefix = best.split("-")[0]
+            same_cat = [t for t in available_trainers if t.startswith(prefix + "-")]
+            trainer = same_cat[0] if same_cat else available_trainers[0]
+            available_trainers.remove(trainer)
+            trained_by = trainer
+            trained_by_title = nodes[trainer].title if trainer in nodes else None
 
         rc = role_costs.get(best)
         chosen.append(
@@ -497,6 +537,8 @@ def recommend(
                 "new_skills": len(role_cov[best]["skills"] - covered["skills"]),
                 "new_knowledge": len(role_cov[best]["knowledge"] - covered["knowledge"]),
                 "weighted_gain": round(best_score, 2),
+                "trained_by": trained_by,
+                "trained_by_title": trained_by_title,
             }
         )
         covered["tasks"] |= role_cov[best]["tasks"]
@@ -666,8 +708,9 @@ def export_plan(
     ]
     if trains:
         for p in trains:
+            trainer_info = f" ← upskill **{p['trained_by_title']}** ({p['trained_by']})" if p.get('trained_by') else ""
             lines.append(
-                f"- **TRAIN**: {p['title']} ({p['role_id']}) — ${p['cost_2yr']:,.0f}"
+                f"- **TRAIN**: {p['title']} ({p['role_id']}) — ${p['cost_2yr']:,.0f}{trainer_info}"
             )
             lines.append(
                 f"  _Rationale_: Upskill existing staff to cover {p['new_tasks']} new tasks immediately."
@@ -915,7 +958,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div class="timeline" id="tl-train"></div>
           </div>
           <div class="chart-container">
-            <h3>Phase 2 — Months 3-18: Hiring</h3>
+            <h3>Phase 2 — Months 1-24: Hiring</h3>
             <div class="timeline" id="tl-hire"></div>
           </div>
         </div>
@@ -1056,7 +1099,7 @@ function renderReco() {
     <tr>
       <td>${i+1}</td>
       <td><strong>${p.title}</strong><br><code style="font-size:.75rem;color:var(--muted)">${p.role_id}</code></td>
-      <td>${badge(p.action)}</td>
+      <td>${badge(p.action)}${p.trained_by ? `<br><span style="font-size:.72rem;color:var(--muted)">← ${p.trained_by_title||p.trained_by}</span>` : ''}</td>
       <td>+${p.new_tasks}</td>
       <td>+${p.new_skills}</td>
       <td>+${p.new_knowledge}</td>
@@ -1478,6 +1521,7 @@ Examples:
             depth=args.depth,
             budget=args.budget,
             costs_path=costs_path,
+            current_roles=set(),
         )
         out = outdir / f"nice_team_{args.focus}.md"
         export_reco_md(
@@ -1501,6 +1545,7 @@ Examples:
             depth=args.depth,
             budget=args.budget,
             costs_path=costs_path,
+            current_roles=cur,
         )
         scenarios = load_risk_scenarios(Path(args.scenarios))
         plan_roles = {p["role_id"] for p in picks}
@@ -1518,6 +1563,7 @@ Examples:
             depth=args.depth,
             budget=args.budget,
             costs_path=costs_path,
+            current_roles=cur,
         )
         scenarios = load_risk_scenarios(Path(args.scenarios))
         plan_roles = {p["role_id"] for p in picks}
