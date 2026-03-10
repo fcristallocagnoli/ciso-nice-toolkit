@@ -429,9 +429,13 @@ def recommend(
     if costs_path and costs_path.exists():
         role_costs = load_role_costs(costs_path)
 
+    # Candidate roles: exclude current staff (they are trainers, not new additions)
+    current_set: Set[str] = current_roles or set()
+    candidate_roles = [r for r in all_roles if r not in current_set]
+
     # Pre-compute coverage for all candidate roles
     role_cov: Dict[str, Dict[str, Set[str]]] = {}
-    for r in all_roles:
+    for r in candidate_roles:
         role_cov[r] = role_coverage(r, adj, nodes, depth=depth)
 
     # cost_unit: the cost at which the penalty divisor doubles (cost/cost_unit + 1 = 2).
@@ -452,7 +456,7 @@ def recommend(
         best_cost = 0.0
         best_action = "hire"
 
-        for r in all_roles:
+        for r in candidate_roles:
             if any(c["role_id"] == r for c in chosen):
                 continue
 
@@ -473,9 +477,12 @@ def recommend(
             rc = role_costs.get(r)
             crit = rc.criticality_score if rc else 5.0
 
-            # Determine cheapest action to set fit_multiplier bonuses
+            # Use CSV-designated action as authoritative preference.
+            # 5.0× bonus for the preferred action, 0.3× penalty for alternatives —
+            # this lets coverage differences between roles drive ordering, while
+            # the designation (train/hire/outsource) locks in the strategy.
+            preferred = rc.action if rc else "hire"
             costs_map = {a: (action_cost_2yr_for(rc, a) if rc else 80_000) for a in ("train", "hire", "outsource")}
-            min_action = min(costs_map, key=lambda a: costs_map[a])
 
             # Evaluate all three strategies; pick the one with best cost-adjusted score
             for action in ("train", "hire", "outsource"):
@@ -487,22 +494,7 @@ def recommend(
                 if cost > remaining_budget:
                     continue
 
-                # fit_multiplier rewards the naturally cheapest action for the role
-                if action == min_action:
-                    if action == "train":
-                        fit_multiplier = 2.5
-                    elif action == "hire":
-                        fit_multiplier = 2.0
-                    else:  # outsource cheapest
-                        fit_multiplier = 2.2 if costs_map["outsource"] < costs_map["hire"] * 0.75 else 1.0
-                else:
-                    if action == "train" and costs_map["train"] > costs_map["hire"] * 0.6:
-                        fit_multiplier = 0.2
-                    elif action == "train":
-                        fit_multiplier = 0.4
-                    else:
-                        fit_multiplier = 1.0
-
+                fit_multiplier = 5.0 if action == preferred else 0.3
                 adjusted = gain * (1 + 0.05 * crit) * fit_multiplier / (cost / cost_unit + 1)
                 if adjusted > best_score:
                     best_score = adjusted
